@@ -21,6 +21,11 @@ enum {
     WEST = 3
 };
 
+enum {
+    ODD = 0,
+    EVEN =1
+};
+
 /*
  * How each move is represented via the index position system
  */
@@ -90,8 +95,8 @@ int main(int argc, const char* argv[]) {
         char tile = mapInitial[c];
         switch (tile) {
             case(BLOB_N): ;
-                BLOB b = {c, NORTH}; //All the blobs are facing up
                 if (listIndex < NUM_BLOBS) {
+                    BLOB b = {c, NORTH}; //All the blobs are facing up
                     monsterListInitial[listIndex] = b;
                     listIndex++;
                 }
@@ -163,17 +168,19 @@ int main(int argc, const char* argv[]) {
         pthread_join(threadIDs[t], NULL);
     }
 
+    //unsigned long numSeeds = lastSeed - firstSeed + 1;
     //clock_t time_b = clock();
+    //double duration = time_b - time_a;
 
-    //printf("searched %ld seeds in %f ms\n", lastSeed-firstSeed+1, (time_b-time_a) * (1e3 / CLOCKS_PER_SEC));
-    //printf("average %.1f us/seed\n", (time_b-time_a) * (1e6 / CLOCKS_PER_SEC) / (lastSeed-firstSeed+1));
+    //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
+    //printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
 }
 
 static void* searchPools(void* args) {
     POOLINFO *poolInfo = ((POOLINFO*) args);
     for (unsigned long seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
-        searchSeed(seed, 1); //EVEN then ODD
-        searchSeed(seed, 0);
+        searchSeed(seed, EVEN);
+        searchSeed(seed, ODD);
     }
     return NULL;
 }
@@ -219,7 +226,9 @@ static void searchSeed(unsigned long seed, int step) { //Step: 1 = EVEN, 0 = ODD
     memcpy(map, mapInitial, 1024);
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS); //Set up copies of the arrays to be used so we don't have to read from file each time
 
-    if (step) moveChip(route[0], &chipIndex, map);
+    if (step == EVEN) {
+        moveChip(route[0], &chipIndex, map);
+    }
     int i=step;
     while (i < routeLength) {
         moveChip(route[i++], &chipIndex, map);
@@ -233,7 +242,7 @@ static void searchSeed(unsigned long seed, int step) { //Step: 1 = EVEN, 0 = ODD
         moveChip(route[i++], &chipIndex, map);
         if (map[chipIndex] == BLOB_N) return;
     }
-    printf("Successful seed: %lu, Step: %c\n", startingSeed, step ? 'E' : 'O');
+    printf("Successful seed: %lu, Step: %s\n", startingSeed, step == EVEN ? "even" : "odd");
 }
 
 static void moveChip(char dir, int *chipIndex, unsigned char map[]) {
