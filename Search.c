@@ -80,6 +80,10 @@ int main(int argc, const char* argv[]) {
     fclose(file);
 
     file = fopen(argv[1], "rb"); //The route filename should be provided via command line
+    if (file == NULL) {
+        perror(argv[1]);
+        return 1;
+    }
     char character;
     while ((character = fgetc(file)) != EOF) { //Sharpeye's code for getting a file size that doesn't rely on SEEK_END
         routeLength++; //EOF is not a part of the original file and therefore incrementing the variable even after hitting means that the variable is equal to the file size
