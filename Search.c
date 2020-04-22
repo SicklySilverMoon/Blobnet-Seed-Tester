@@ -197,20 +197,19 @@ static bool verifyRoute(void) {
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS);
 
     int chipsNeeded = 88;
-    int ok = true;
     for (int i = 0; i < routeLength; i++) {
         int dir = route[i];
         chipIndex = chipIndex + dir;
         if (map[chipIndex] == WALL) {
             printf("hit a wall at move %d\n", i);
-            ok = false;
-            break;
+            return false;
         }
         if (map[chipIndex] == COSMIC_CHIP) {
             map[chipIndex] = FLOOR;
             chipsNeeded -= 1;
         }
     }
+    int ok = true;
     if (chipsNeeded > 0) {
         printf("route does not collect all chips\n");
         ok = false;
