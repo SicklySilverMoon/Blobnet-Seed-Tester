@@ -1,9 +1,11 @@
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
+#include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <limits.h>
 
 // Tiles
 #define FLOOR       0x00
@@ -21,6 +23,15 @@ enum {
     WEST = 3
 };
 
+enum {
+    ODD = 0,
+    EVEN =1
+};
+
+enum {
+    MS, TW
+};
+
 /*
  * How each move is represented via the index position system
  */
@@ -32,6 +43,16 @@ enum {
 typedef signed char DIR;
 static const DIR diridx[4] = { MOVE_UP, MOVE_RIGHT, MOVE_DOWN, MOVE_LEFT };
 
+struct prng {
+    uint32_t value;
+};
+
+static void msadvance(struct prng *rng);
+static int msrandn(struct prng *rng, int max);
+
+static void twadvance(struct prng *rng);
+static void twrandomp4(struct prng *rng, int* array);
+
 typedef struct BLOB {
     int index;
     DIR dir;
@@ -39,14 +60,11 @@ typedef struct BLOB {
 
 static bool verifyRoute(void);
 static int canEnter(unsigned char tile);
-static void moveBlob(unsigned long* seed, BLOB* b, unsigned char upper[]);
+static void moveBlobMS(struct prng*, BLOB* b, unsigned char upper[]);
+static void moveBlobTW(struct prng*, BLOB* b, unsigned char upper[]);
 static void moveChip(char dir, int *chipIndex, unsigned char upper[]);
-static void searchSeed(unsigned long seed, int step);
+static void searchSeed(int rngtype, unsigned long seed, int step);
 static void* searchPools(void* args);
-
-static void nextvalue(unsigned long* currentValue);
-void advance79(unsigned long* currentValue);
-static void randomp4(unsigned long* currentValue, int* array);
 
 typedef struct POOLINFO {
     unsigned long poolStart;
@@ -75,6 +93,10 @@ int main(int argc, const char* argv[]) {
     fclose(file);
 
     file = fopen(argv[1], "rb"); //The route filename should be provided via command line
+    if (file == NULL) {
+        perror(argv[1]);
+        return 1;
+    }
     char character;
     while ((character = fgetc(file)) != EOF) { //Sharpeye's code for getting a file size that doesn't rely on SEEK_END
         routeLength++; //EOF is not a part of the original file and therefore incrementing the variable even after hitting means that the variable is equal to the file size
@@ -90,8 +112,8 @@ int main(int argc, const char* argv[]) {
         char tile = mapInitial[c];
         switch (tile) {
             case(BLOB_N): ;
-                BLOB b = {c, NORTH}; //All the blobs are facing up
                 if (listIndex < NUM_BLOBS) {
+                    BLOB b = {c, NORTH}; //All the blobs are facing up
                     monsterListInitial[listIndex] = b;
                     listIndex++;
                 }
@@ -139,7 +161,7 @@ int main(int argc, const char* argv[]) {
 
     threadIDs = malloc((numThreads - 1) * sizeof(pthread_t));
     unsigned long firstSeed = 0;
-    unsigned long lastSeed = 2147483647UL;
+    unsigned long lastSeed = INT_MAX;
     unsigned long seedPoolSize = (lastSeed-firstSeed+1)/numThreads;
 
     //clock_t time_a = clock();
@@ -163,17 +185,21 @@ int main(int argc, const char* argv[]) {
         pthread_join(threadIDs[t], NULL);
     }
 
+    //unsigned long numSeeds = lastSeed - firstSeed + 1;
     //clock_t time_b = clock();
+    //double duration = time_b - time_a;
 
-    //printf("searched %ld seeds in %f ms\n", lastSeed-firstSeed+1, (time_b-time_a) * (1e3 / CLOCKS_PER_SEC));
-    //printf("average %.1f us/seed\n", (time_b-time_a) * (1e6 / CLOCKS_PER_SEC) / (lastSeed-firstSeed+1));
+    //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
+    //printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
 }
 
 static void* searchPools(void* args) {
     POOLINFO *poolInfo = ((POOLINFO*) args);
     for (unsigned long seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
-        searchSeed(seed, 1); //EVEN then ODD
-        searchSeed(seed, 0);
+        searchSeed(TW, seed, EVEN);
+        searchSeed(TW, seed, ODD);
+        searchSeed(MS, seed, EVEN);
+        searchSeed(MS, seed, ODD);
     }
     return NULL;
 }
@@ -186,20 +212,19 @@ static bool verifyRoute(void) {
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS);
 
     int chipsNeeded = 88;
-    int ok = true;
     for (int i = 0; i < routeLength; i++) {
         int dir = route[i];
         chipIndex = chipIndex + dir;
         if (map[chipIndex] == WALL) {
             printf("hit a wall at move %d\n", i);
-            ok = false;
-            break;
+            return false;
         }
         if (map[chipIndex] == COSMIC_CHIP) {
             map[chipIndex] = FLOOR;
             chipsNeeded -= 1;
         }
     }
+    int ok = true;
     if (chipsNeeded > 0) {
         printf("route does not collect all chips\n");
         ok = false;
@@ -211,37 +236,45 @@ static bool verifyRoute(void) {
     return ok;
 }
 
-static void searchSeed(unsigned long seed, int step) { //Step: 1 = EVEN, 0 = ODD
-    unsigned long startingSeed = seed;
+static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //Step: 1 = EVEN, 0 = ODD
+    struct prng rng = {startingSeed};
     int chipIndex = chipIndexInitial;
     unsigned char map[1024];
     BLOB monsterList[NUM_BLOBS];
     memcpy(map, mapInitial, 1024);
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS); //Set up copies of the arrays to be used so we don't have to read from file each time
 
-    if (step) moveChip(route[0], &chipIndex, map);
+    if (step == EVEN) {
+        moveChip(route[0], &chipIndex, map);
+    }
     int i=step;
     while (i < routeLength) {
         moveChip(route[i++], &chipIndex, map);
         if (map[chipIndex] == BLOB_N) return;
 
         for (int j=0; j < NUM_BLOBS; j++) {
-            moveBlob(&seed, &monsterList[j], map);
+            if (rngtype == TW) {
+                moveBlobTW(&rng, &monsterList[j], map);
+            } else {
+                moveBlobMS(&rng, &monsterList[j], map);
+            }
         }
         if (map[chipIndex] == BLOB_N) return;
 
         moveChip(route[i++], &chipIndex, map);
         if (map[chipIndex] == BLOB_N) return;
     }
-    printf("Successful seed: %lu, Step: %c\n", startingSeed, step ? 'E' : 'O');
+    printf("Successful seed: %lu, Step: %s, RNG: %s\n", startingSeed, step == EVEN ? "even" : "odd", rngtype == TW ? "TW" : "MS");
 }
+
+/* TW search */
 
 static void moveChip(char dir, int *chipIndex, unsigned char map[]) {
     *chipIndex = *chipIndex + dir;
     if (map[*chipIndex] == COSMIC_CHIP) map[*chipIndex] = FLOOR;
 }
 
-static const DIR turndirs[4][4] = {
+static const DIR twturndirs[4][4] = {
     // ahead, left, back, right
     { NORTH, WEST, SOUTH, EAST }, // NORTH
     { EAST, NORTH, WEST, SOUTH }, // EAST
@@ -249,12 +282,12 @@ static const DIR turndirs[4][4] = {
     { WEST, SOUTH, EAST, NORTH }, // WEST
 };
 
-static void moveBlob(unsigned long* seed, BLOB* b, unsigned char upper[]) {
+static void moveBlobTW(struct prng *rng, BLOB* b, unsigned char upper[]) {
     int order[4] = {0, 1, 2, 3};
-    randomp4(seed, order);
+    twrandomp4(rng, order);
 
     for (int i=0; i<4; i++) {
-        int dir = turndirs[b->dir][order[i]];
+        int dir = twturndirs[b->dir][order[i]];
         unsigned char tile = upper[b->index + diridx[dir]];
 
         if (canEnter(tile)) {
@@ -271,31 +304,94 @@ static int canEnter(unsigned char tile) {
     return (tile == FLOOR);
 }
 
-static void nextvalue(unsigned long* currentValue)
+static void twadvance(struct prng *rng)
 {
-    *currentValue = ((*currentValue * 1103515245UL) + 12345UL) & 0x7FFFFFFFUL; //Same generator/advancement Tile World uses
+    rng->value = ((rng->value * 1103515245UL) + 12345UL) & 0x7FFFFFFFUL; //Same generator/advancement Tile World uses
 }
 
 /*
  * Advance the RNG state by 79 values all at once
 */
-void advance79(unsigned long* currentValue)
+void twadvance79(struct prng *rng)
 {
-    *currentValue = ((*currentValue * 2441329573UL) + 2062159411UL) & 0x7FFFFFFFUL;
+    rng->value = ((rng->value * 2441329573UL) + 2062159411UL) & 0x7FFFFFFFUL;
 }
 
 /* Randomly permute a list of four values. Three random numbers are
  * used, with the ranges [0,1], [0,1,2], and [0,1,2,3].
  */
-static void randomp4(unsigned long* currentValue, int* array)
+static void twrandomp4(struct prng *rng, int* array)
 {
     int	n, t;
 
-    nextvalue(currentValue);
-    n = *currentValue >> 30;
+    twadvance(rng);
+    n = rng->value >> 30;
     t = array[n];  array[n] = array[1];  array[1] = t;
-    n = (int)((3.0 * (*currentValue & 0x0FFFFFFFUL)) / (double)0x10000000UL);
+    n = (int)((3.0 * (rng->value & 0x0FFFFFFFUL)) / (double)0x10000000UL);
     t = array[n];  array[n] = array[2];  array[2] = t;
-    n = (*currentValue >> 28) & 3;
+    n = (rng->value >> 28) & 3;
     t = array[n];  array[n] = array[3];  array[3] = t;
+}
+
+/* MSCC Search */
+
+// current dir => turn => new direction
+static const DIR msturndirs[4][4] = {
+    // left, right, back
+    { WEST, EAST, SOUTH }, // NORTH
+    { NORTH, SOUTH, WEST }, // EAST
+    { EAST, WEST, NORTH }, // SOUTH
+    { SOUTH, NORTH, EAST }, // WEST
+};
+
+static const DIR xytodir[3][3] = {
+    { -1, NORTH, -1 },
+    { WEST, -1, EAST },
+    { -1, SOUTH, -1 },
+};
+
+static void moveBlobMS(struct prng *rng, BLOB* b, unsigned char upper[]) {
+    int dir;
+    int facedir, xdir, ydir;
+    do {
+        xdir = msrandn(rng, 3);
+        ydir = msrandn(rng, 3);
+        facedir = xytodir[ydir][xdir];
+    } while (facedir == -1);
+
+    int index = b->index + diridx[facedir];
+    if (canEnter(upper[index])) {
+        goto ok;
+    }
+
+    unsigned int todo = 7;
+    do {
+        int turn = msrandn(rng, 3);
+        if (todo & (1U<<turn)) {
+            todo &= ~(1U<<turn);
+            dir = msturndirs[facedir][turn];
+            index = b->index + diridx[dir];
+            if (canEnter(upper[index])) {
+                goto ok;
+            }
+        }
+    } while (todo);
+    return;
+ok:
+    upper[b->index] = FLOOR;
+    upper[index] = BLOB_N;
+    //b->dir = dir;
+    b->index = index;
+    return;
+}
+
+static void msadvance(struct prng *rng)
+{
+    rng->value = ((rng->value * 0x343FDul) + 0x269EC3ul);
+}
+
+static int msrandn(struct prng *rng, int n)
+{
+    msadvance(rng);
+    return (int)((rng->value>>16)&0x7fff) % n;
 }
