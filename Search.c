@@ -42,6 +42,11 @@ enum {
 
 typedef signed char DIR;
 static const DIR diridx[4] = { MOVE_UP, MOVE_RIGHT, MOVE_DOWN, MOVE_LEFT };
+static const DIR yxtodir[3][3] = {
+    { -1, NORTH, -1 },
+    { WEST, -1, EAST },
+    { -1, SOUTH, -1 },
+};
 
 struct prng {
     uint32_t value;
@@ -241,6 +246,26 @@ static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //St
     int chipIndex = chipIndexInitial;
     unsigned char map[1024];
     BLOB monsterList[NUM_BLOBS];
+
+    // Optimization for MSCC:
+    // When a blob moves, it first selects a facing direction. If this
+    // direction isn't one of the 4 valid directions, it will reroll until it
+    // is. For the _very first move_ of the _very first blob_ of a seed,
+    // rerolling is equivalent to starting at a different seed.
+    // Assuming we search the entire rng state space, we will eventually
+    // encounter that seed directly, so there's no need to continue evaluating
+    // this seed.
+    //
+    // This eliminates 5/9 of the search space.
+    if (rngtype == MS) {
+        struct prng tmp = rng;
+        int xdir = msrandn(&tmp, 3);
+        int ydir = msrandn(&tmp, 3);
+        if (yxtodir[ydir][xdir] == -1) {
+            return;
+        }
+    }
+
     memcpy(map, mapInitial, 1024);
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS); //Set up copies of the arrays to be used so we don't have to read from file each time
 
@@ -344,19 +369,13 @@ static const DIR msturndirs[4][4] = {
     { SOUTH, NORTH, EAST }, // WEST
 };
 
-static const DIR xytodir[3][3] = {
-    { -1, NORTH, -1 },
-    { WEST, -1, EAST },
-    { -1, SOUTH, -1 },
-};
-
 static void moveBlobMS(struct prng *rng, BLOB* b, unsigned char upper[]) {
     int dir;
     int facedir, xdir, ydir;
     do {
         xdir = msrandn(rng, 3);
         ydir = msrandn(rng, 3);
-        facedir = xytodir[ydir][xdir];
+        facedir = yxtodir[ydir][xdir];
     } while (facedir == -1);
 
     int index = b->index + diridx[facedir];
