@@ -176,7 +176,7 @@ int main(int argc, const char* argv[]) {
     unsigned long lastSeed = INT_MAX;
     unsigned long seedPoolSize = (lastSeed-firstSeed+1)/numThreads;
 
-    clock_t time_a = clock();
+  //clock_t time_a = clock();
 
     for (long threadNum = 0; threadNum < numThreads - 1; threadNum++) {  //Run a number of threads equal to system threads - 1
         POOLINFO* poolInfo = malloc(sizeof(POOLINFO)); //Starting seed and ending seed
@@ -193,16 +193,16 @@ int main(int argc, const char* argv[]) {
     //printf("Main thread: start=%#lx\tend=%#lx\n", poolInfo->poolStart, poolInfo->poolEnd);
     searchPools((void*) poolInfo);
 
-    //for (int t = 0; t < numThreads - 1; t++) { //Make the main thread wait for the other threads to finish so the program doesn't end early
-    //    pthread_join(threadIDs[t], NULL);
-    //}
+    for (int t = 0; t < numThreads - 1; t++) { //Make the main thread wait for the other threads to finish so the program doesn't end early
+        pthread_join(threadIDs[t], NULL);
+    }
 
-    unsigned long numSeeds = lastSeed - firstSeed + 1;
-    clock_t time_b = clock();
-    double duration = time_b - time_a;
+  //unsigned long numSeeds = lastSeed - firstSeed + 1;
+  //clock_t time_b = clock();
+  //double duration = time_b - time_a;
 
-    printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
-    printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
+  //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
+  //printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
 }
 
 static void* searchPools(void* args) {
@@ -272,6 +272,10 @@ static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //St
             return;
         }
     }
+    // Optimization for TW:
+    // By simulating only the starting area via single equation RNG advancement,
+    // only looking for collisions on tiles where its known they can occur,
+    // and only simulating 2 blobs, TW's seed space can be reduced by roughly 80%
     else {
         unsigned char tempMap[1024];
         memcpy(tempMap, mapInitial, 1024);
