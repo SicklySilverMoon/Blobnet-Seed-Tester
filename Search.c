@@ -56,6 +56,11 @@ static void msadvance(struct prng *rng);
 static int msrandn(struct prng *rng, int max);
 
 static void twadvance(struct prng *rng);
+static void twadvance79(struct prng *rng);
+static void twadvance78(struct prng *rng);
+static void twadvance71(struct prng *rng);
+static void twadvance4(struct prng *rng);
+static void twadvance7(struct prng *rng);
 static void twrandomp4(struct prng *rng, int* array);
 
 typedef struct BLOB {
@@ -64,12 +69,14 @@ typedef struct BLOB {
 } BLOB;
 
 static bool verifyRoute(void);
-static int canEnter(unsigned char tile);
+#define canEnter(tile) (tile == FLOOR)
 static void moveBlobMS(struct prng*, BLOB* b, unsigned char upper[]);
 static void moveBlobTW(struct prng*, BLOB* b, unsigned char upper[]);
 static void moveChip(char dir, int *chipIndex, unsigned char upper[]);
 static void searchSeed(int rngtype, unsigned long seed, int step);
 static void* searchPools(void* args);
+
+static int twIntro(struct prng rng, int step, unsigned char upper[]);
 
 typedef struct POOLINFO {
     unsigned long poolStart;
@@ -169,7 +176,7 @@ int main(int argc, const char* argv[]) {
     unsigned long lastSeed = INT_MAX;
     unsigned long seedPoolSize = (lastSeed-firstSeed+1)/numThreads;
 
-    //clock_t time_a = clock();
+    clock_t time_a = clock();
 
     for (long threadNum = 0; threadNum < numThreads - 1; threadNum++) {  //Run a number of threads equal to system threads - 1
         POOLINFO* poolInfo = malloc(sizeof(POOLINFO)); //Starting seed and ending seed
@@ -186,16 +193,16 @@ int main(int argc, const char* argv[]) {
     //printf("Main thread: start=%#lx\tend=%#lx\n", poolInfo->poolStart, poolInfo->poolEnd);
     searchPools((void*) poolInfo);
 
-    for (int t = 0; t < numThreads - 1; t++) { //Make the main thread wait for the other threads to finish so the program doesn't end early
-        pthread_join(threadIDs[t], NULL);
-    }
+    //for (int t = 0; t < numThreads - 1; t++) { //Make the main thread wait for the other threads to finish so the program doesn't end early
+    //    pthread_join(threadIDs[t], NULL);
+    //}
 
-    //unsigned long numSeeds = lastSeed - firstSeed + 1;
-    //clock_t time_b = clock();
-    //double duration = time_b - time_a;
+    unsigned long numSeeds = lastSeed - firstSeed + 1;
+    clock_t time_b = clock();
+    double duration = time_b - time_a;
 
-    //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
-    //printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
+    printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
+    printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
 }
 
 static void* searchPools(void* args) {
@@ -265,6 +272,12 @@ static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //St
             return;
         }
     }
+    else {
+        unsigned char tempMap[1024];
+        memcpy(tempMap, mapInitial, 1024);
+        if (!twIntro(rng, step, tempMap))
+            return;
+    }
 
     memcpy(map, mapInitial, 1024);
     memcpy(monsterList, monsterListInitial, sizeof(struct BLOB)*NUM_BLOBS); //Set up copies of the arrays to be used so we don't have to read from file each time
@@ -325,8 +338,57 @@ static void moveBlobTW(struct prng *rng, BLOB* b, unsigned char upper[]) {
     }
 }
 
-static int canEnter(unsigned char tile) {
-    return (tile == FLOOR);
+//Extremely blobnet and route 444 specific, will need to be rewritten if different levels are tested
+static int twIntro(struct prng rng, int step, unsigned char upper[]) {
+    if (step == EVEN) {
+        BLOB blob5 = monsterListInitial[4];
+        BLOB blob6 = monsterListInitial[5];
+    
+        upper[81] = FLOOR; //extremely hardcoded index values for relevant positions
+        twadvance4(&rng);
+        moveBlobTW(&rng, &blob5, upper);
+        moveBlobTW(&rng, &blob6, upper);
+        twadvance78(&rng);
+        if (upper[81] == BLOB_N || upper[80] == BLOB_N)
+            return 0;
+        
+        moveBlobTW(&rng, &blob5, upper);
+        if (upper[79] == BLOB_N)
+            return 0;
+        return 1;
+    }
+    else {
+        BLOB blob5 = monsterListInitial[4], blob13 = monsterListInitial[12];
+        
+        twadvance4(&rng);
+        moveBlobTW(&rng, &blob5, upper);
+        twadvance7(&rng);
+        moveBlobTW(&rng, &blob13, upper);
+        twadvance71(&rng);
+        
+        if (upper[80] == BLOB_N)
+            return 0;
+        
+        moveBlobTW(&rng, &blob5, upper);
+        twadvance7(&rng);
+        moveBlobTW(&rng, &blob13, upper);
+        twadvance79(&rng);
+        if (upper[79] == BLOB_N)
+            return 0;
+        
+        moveBlobTW(&rng, &blob13, upper);
+        twadvance79(&rng);
+        moveBlobTW(&rng, &blob13, upper);
+        twadvance79(&rng);
+        upper[140] = FLOOR;
+        moveBlobTW(&rng, &blob13, upper);
+        twadvance79(&rng);
+        if (upper[140] == BLOB_N)
+            return 0;
+        return 1;
+    }
+    printf("ERROR: REACHED END OF twIntro function!\n");
+    return 0;
 }
 
 static void twadvance(struct prng *rng)
@@ -337,9 +399,29 @@ static void twadvance(struct prng *rng)
 /*
  * Advance the RNG state by 79 values all at once
 */
-void twadvance79(struct prng *rng)
+static void twadvance79(struct prng *rng)
 {
     rng->value = ((rng->value * 2441329573UL) + 2062159411UL) & 0x7FFFFFFFUL;
+}
+
+static void twadvance4(struct prng *rng)
+{
+    rng->value = ((rng->value * 3993403153UL) + 1449466924UL) & 0x7FFFFFFFUL;
+}
+
+static void twadvance78(struct prng *rng)
+{
+    rng->value = ((rng->value * 1450606361UL) + 45289890UL) & 0x7FFFFFFFUL;
+}
+
+static void twadvance7(struct prng *rng)
+{
+    rng->value = ((rng->value * 456479493UL) + 1051550459UL) & 0x7FFFFFFFUL;
+}
+
+static void twadvance71(struct prng *rng)
+{
+    rng->value = ((rng->value * 1212309509UL) + 662438587UL) & 0x7FFFFFFFUL;
 }
 
 /* Randomly permute a list of four values. Three random numbers are
