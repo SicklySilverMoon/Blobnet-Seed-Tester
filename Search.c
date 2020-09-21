@@ -200,9 +200,9 @@ int main(int argc, const char* argv[]) {
   //unsigned long numSeeds = lastSeed - firstSeed + 1;
   //clock_t time_b = clock();
   //double duration = time_b - time_a;
-
+    
   //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
-  //printf("average %.1f us/seed\n", duration * (1e6 / CLOCKS_PER_SEC) / numSeeds);
+  //printf("average %.1f us/seed\n", (duration * (1e9 / CLOCKS_PER_SEC)) / numSeeds);
 }
 
 static void* searchPools(void* args) {
