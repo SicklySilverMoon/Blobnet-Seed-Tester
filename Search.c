@@ -1,13 +1,24 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <inttypes.h>
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
-#include <limits.h>
+////////////////////
+//// Table of Contents
+////
+//// 1. Definitions
+//// 2. Core Functions
+//// 3. TW Functions
+//// 4. MSCC Functions
+////////////////////
 
+////////////////////
+////
+//// 1. Definitions
+////
+////////////////////
 #define DEBUG 1
 
 // Tiles
@@ -19,6 +30,7 @@
 #define BLOB_N      0x5C
 #define CHIP_S      0x6E
 
+// Enums
 enum {
     NORTH = 0,
     EAST = 1,
@@ -43,6 +55,7 @@ enum {
 #define MOVE_RIGHT    1
 #define MOVE_LEFT    -1
 
+// Directions + Related
 typedef signed char Dir;
 static const Dir diridx[4] = { MOVE_UP, MOVE_RIGHT, MOVE_DOWN, MOVE_LEFT };
 static const Dir yxtodir[3][3] = {
@@ -50,42 +63,39 @@ static const Dir yxtodir[3][3] = {
     { WEST, -1, EAST },
     { -1, SOUTH, -1 },
 };
-
-struct prng {
-    uint32_t value;
+/* TW Turn Array */
+static const Dir twturndirs[4][4] = {
+    // ahead, left, back, right
+    { NORTH, WEST, SOUTH, EAST }, // NORTH
+    { EAST, NORTH, WEST, SOUTH }, // EAST
+    { SOUTH, EAST, NORTH, WEST }, // SOUTH
+    { WEST, SOUTH, EAST, NORTH }, // WEST
+};
+/* MS Turn Array; current dir => turn => new direction */
+static const Dir msturndirs[4][4] = {
+    // left, right, back
+    { WEST, EAST, SOUTH }, // NORTH
+    { NORTH, SOUTH, WEST }, // EAST
+    { EAST, WEST, NORTH }, // SOUTH
+    { SOUTH, NORTH, EAST }, // WEST
 };
 
-static void msadvance(struct prng* rng);
-static int msrandn(struct prng* rng, int max);
-
-static void twadvance(struct prng* rng);
-static void twadvance79(struct prng* rng);
-static void twadvance78(struct prng* rng);
-static void twadvance71(struct prng* rng);
-static void twadvance4(struct prng* rng);
-static void twadvance7(struct prng* rng);
-static void twrandomp4(struct prng* rng, int* array);
+// Structs
+struct prng {
+    uint_fast32_t value;
+};
 
 typedef struct Blob {
     int index;
     Dir dir;
 } Blob;
 
-static bool verifyRoute(void);
-#define canEnter(tile) (tile == FLOOR)
-static void moveBlobMS(struct prng* rng, Blob* b, unsigned char upper[]);
-static void moveBlobTW(struct prng* rng, Blob* b, unsigned char upper[]);
-static void moveChip(char dir, int* chipIndex, unsigned char upper[]);
-static void searchSeed(int rngtype, uint_fast32_t seed, int step);
-static void* searchPools(void* args);
-
-static int twIntro(struct prng rng, int step, unsigned char upper[]);
-
 typedef struct PoolInfo {
     uint_fast32_t poolStart;
     uint_fast32_t poolEnd;
 } PoolInfo;
 
+// Variables
 static char* route;
 static int routeLength = 0;
 
@@ -94,6 +104,35 @@ static Blob monsterListInitial[NUM_BLOBS]; //80 blobs in the level, the list sim
 static unsigned char mapInitial[1024];
 static int chipIndexInitial;
 static pthread_t* threadIDs;
+
+// Functions
+#define canEnter(tile) (tile == FLOOR)
+static bool verifyRoute(void);
+
+static void* searchPools(void* args);
+static void searchSeed(int rngtype, uint_fast32_t seed, int step);
+
+static void moveChip(char dir, int* chipIndex, unsigned char upper[]);
+
+static void moveBlobTW(struct prng* rng, Blob* b, unsigned char upper[]);
+static int twIntro(struct prng rng, int step, unsigned char upper[]);
+static void twAdvance(struct prng* rng);
+static void twrandomp4(struct prng* rng, int* array);
+static void twAdvance79(struct prng* rng);
+static void twAdvance78(struct prng* rng);
+static void twAdvance71(struct prng* rng);
+static void twAdvance7(struct prng* rng);
+static void twAdvance4(struct prng* rng);
+
+static void moveBlobMS(struct prng* rng, Blob* b, unsigned char upper[]);
+static void msAdvance(struct prng* rng);
+static int msRandN(struct prng* rng, int max);
+
+////////////////////
+////
+//// 2. Core Functions
+////
+////////////////////
 
 int main(int argc, const char* argv[]) {
     if (argc == 1) {
@@ -216,17 +255,6 @@ int main(int argc, const char* argv[]) {
     #endif
 }
 
-static void* searchPools(void* args) {
-    PoolInfo* poolInfo = ((PoolInfo*) args);
-    for (uint_fast32_t seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
-        searchSeed(TW, seed, EVEN);
-        searchSeed(TW, seed, ODD);
-        searchSeed(MS, seed, EVEN);
-        searchSeed(MS, seed, ODD);
-    }
-    return NULL;
-}
-
 static bool verifyRoute(void) {
     int chipIndex = chipIndexInitial;
     unsigned char map[1024];
@@ -259,6 +287,17 @@ static bool verifyRoute(void) {
     return ok;
 }
 
+static void* searchPools(void* args) {
+    PoolInfo* poolInfo = ((PoolInfo*) args);
+    for (uint_fast32_t seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
+        searchSeed(TW, seed, EVEN);
+        searchSeed(TW, seed, ODD);
+        searchSeed(MS, seed, EVEN);
+        searchSeed(MS, seed, ODD);
+    }
+    return NULL;
+}
+
 static void searchSeed(int rngtype, uint_fast32_t startingSeed, int step) { //Step: 1 = EVEN, 0 = ODD
     struct prng rng = {startingSeed};
     int chipIndex = chipIndexInitial;
@@ -277,8 +316,8 @@ static void searchSeed(int rngtype, uint_fast32_t startingSeed, int step) { //St
     // This eliminates 5/9 of the search space.
     if (rngtype == MS) {
         struct prng tmp = rng;
-        int xdir = msrandn(&tmp, 3);
-        int ydir = msrandn(&tmp, 3);
+        int xdir = msRandN(&tmp, 3);
+        int ydir = msRandN(&tmp, 3);
         if (yxtodir[ydir][xdir] == -1) {
             return;
         }
@@ -320,20 +359,16 @@ static void searchSeed(int rngtype, uint_fast32_t startingSeed, int step) { //St
     printf("Successful seed: %" PRIuFAST32 ", Step: %s, RNG: %s\n", startingSeed, step == EVEN ? "even" : "odd", rngtype == TW ? "TW" : "MS");
 }
 
-/* TW search */
-
 static void moveChip(char dir, int* chipIndex, unsigned char map[]) {
     *chipIndex = *chipIndex + dir;
     if (map[*chipIndex] == COSMIC_CHIP) map[*chipIndex] = FLOOR;
 }
 
-static const Dir twturndirs[4][4] = {
-    // ahead, left, back, right
-    { NORTH, WEST, SOUTH, EAST }, // NORTH
-    { EAST, NORTH, WEST, SOUTH }, // EAST
-    { SOUTH, EAST, NORTH, WEST }, // SOUTH
-    { WEST, SOUTH, EAST, NORTH }, // WEST
-};
+////////////////////
+////
+//// 3. TW Functions
+////
+////////////////////
 
 static void moveBlobTW(struct prng* rng, Blob* b, unsigned char upper[]) {
     int order[4] = {0, 1, 2, 3};
@@ -360,10 +395,10 @@ static int twIntro(struct prng rng, int step, unsigned char upper[]) {
         Blob blob6 = monsterListInitial[5];
     
         upper[81] = FLOOR; //extremely hardcoded index values for relevant positions
-        twadvance4(&rng);
+        twAdvance4(&rng);
         moveBlobTW(&rng, &blob5, upper);
         moveBlobTW(&rng, &blob6, upper);
-        twadvance78(&rng);
+        twAdvance78(&rng);
         if (upper[81] == BLOB_N || upper[80] == BLOB_N)
             return 0;
         
@@ -375,29 +410,29 @@ static int twIntro(struct prng rng, int step, unsigned char upper[]) {
     else {
         Blob blob5 = monsterListInitial[4], blob13 = monsterListInitial[12];
         
-        twadvance4(&rng);
+        twAdvance4(&rng);
         moveBlobTW(&rng, &blob5, upper);
-        twadvance7(&rng);
+        twAdvance7(&rng);
         moveBlobTW(&rng, &blob13, upper);
-        twadvance71(&rng);
+        twAdvance71(&rng);
         
         if (upper[80] == BLOB_N)
             return 0;
         
         moveBlobTW(&rng, &blob5, upper);
-        twadvance7(&rng);
+        twAdvance7(&rng);
         moveBlobTW(&rng, &blob13, upper);
-        twadvance79(&rng);
+        twAdvance79(&rng);
         if (upper[79] == BLOB_N)
             return 0;
         
         moveBlobTW(&rng, &blob13, upper);
-        twadvance79(&rng);
+        twAdvance79(&rng);
         moveBlobTW(&rng, &blob13, upper);
-        twadvance79(&rng);
+        twAdvance79(&rng);
         upper[140] = FLOOR;
         moveBlobTW(&rng, &blob13, upper);
-        twadvance79(&rng);
+        twAdvance79(&rng);
         if (upper[140] == BLOB_N)
             return 0;
         return 1;
@@ -406,31 +441,8 @@ static int twIntro(struct prng rng, int step, unsigned char upper[]) {
     return 0;
 }
 
-static void twadvance(struct prng* rng) {
+static void twAdvance(struct prng* rng) {
     rng->value = ((rng->value * 1103515245UL) + 12345UL) & 0x7FFFFFFFUL; //Same generator/advancement Tile World uses
-}
-
-/*
- * Advance the RNG state by 79 values all at once
-*/
-static void twadvance79(struct prng* rng) {
-    rng->value = ((rng->value * 2441329573UL) + 2062159411UL) & 0x7FFFFFFFUL;
-}
-
-static void twadvance4(struct prng* rng) {
-    rng->value = ((rng->value * 3993403153UL) + 1449466924UL) & 0x7FFFFFFFUL;
-}
-
-static void twadvance78(struct prng* rng) {
-    rng->value = ((rng->value * 1450606361UL) + 45289890UL) & 0x7FFFFFFFUL;
-}
-
-static void twadvance7(struct prng* rng) {
-    rng->value = ((rng->value * 456479493UL) + 1051550459UL) & 0x7FFFFFFFUL;
-}
-
-static void twadvance71(struct prng* rng) {
-    rng->value = ((rng->value * 1212309509UL) + 662438587UL) & 0x7FFFFFFFUL;
 }
 
 /* Randomly permute a list of four values. Three random numbers are
@@ -439,7 +451,7 @@ static void twadvance71(struct prng* rng) {
 static void twrandomp4(struct prng* rng, int* array) {
     int	n, t;
 
-    twadvance(rng);
+    twAdvance(rng);
     n = rng->value >> 30;
     t = array[n];  array[n] = array[1];  array[1] = t;
     n = (int)((3.0 * (rng->value & 0x0FFFFFFFUL)) / (double)0x10000000UL);
@@ -448,23 +460,41 @@ static void twrandomp4(struct prng* rng, int* array) {
     t = array[n];  array[n] = array[3];  array[3] = t;
 }
 
-/* MSCC Search */
+/*
+ * Advance the RNG state by 79 values all at once
+*/
+static void twAdvance79(struct prng* rng) {
+    rng->value = ((rng->value * 2441329573UL) + 2062159411UL) & 0x7FFFFFFFUL;
+}
 
-// current dir => turn => new direction
-static const Dir msturndirs[4][4] = {
-    // left, right, back
-    { WEST, EAST, SOUTH }, // NORTH
-    { NORTH, SOUTH, WEST }, // EAST
-    { EAST, WEST, NORTH }, // SOUTH
-    { SOUTH, NORTH, EAST }, // WEST
-};
+static void twAdvance78(struct prng* rng) {
+    rng->value = ((rng->value * 1450606361UL) + 45289890UL) & 0x7FFFFFFFUL;
+}
+
+static void twAdvance71(struct prng* rng) {
+    rng->value = ((rng->value * 1212309509UL) + 662438587UL) & 0x7FFFFFFFUL;
+}
+
+static void twAdvance7(struct prng* rng) {
+    rng->value = ((rng->value * 456479493UL) + 1051550459UL) & 0x7FFFFFFFUL;
+}
+
+static void twAdvance4(struct prng* rng) {
+    rng->value = ((rng->value * 3993403153UL) + 1449466924UL) & 0x7FFFFFFFUL;
+}
+
+////////////////////
+////
+//// 4. MSCC Functions
+////
+////////////////////
 
 static void moveBlobMS(struct prng* rng, Blob* b, unsigned char upper[]) {
     int dir;
     int facedir, xdir, ydir;
     do {
-        xdir = msrandn(rng, 3);
-        ydir = msrandn(rng, 3);
+        xdir = msRandN(rng, 3);
+        ydir = msRandN(rng, 3);
         facedir = yxtodir[ydir][xdir];
     } while (facedir == -1);
 
@@ -475,7 +505,7 @@ static void moveBlobMS(struct prng* rng, Blob* b, unsigned char upper[]) {
 
     unsigned int todo = 7;
     do {
-        int turn = msrandn(rng, 3);
+        int turn = msRandN(rng, 3);
         if (todo & (1U<<turn)) {
             todo &= ~(1U<<turn);
             dir = msturndirs[facedir][turn];
@@ -494,11 +524,11 @@ ok:
     return;
 }
 
-static void msadvance(struct prng* rng) {
+static void msAdvance(struct prng* rng) {
     rng->value = ((rng->value * 0x343FDul) + 0x269EC3ul);
 }
 
-static int msrandn(struct prng* rng, int n) {
-    msadvance(rng);
+static int msRandN(struct prng* rng, int n) {
+    msAdvance(rng);
     return (int)((rng->value>>16)&0x7fff) % n;
 }
