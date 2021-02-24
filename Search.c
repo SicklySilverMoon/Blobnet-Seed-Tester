@@ -2,10 +2,13 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
 #include <limits.h>
+
+#define DEBUG 1
 
 // Tiles
 #define FLOOR       0x00
@@ -73,14 +76,14 @@ static bool verifyRoute(void);
 static void moveBlobMS(struct prng* rng, Blob* b, unsigned char upper[]);
 static void moveBlobTW(struct prng* rng, Blob* b, unsigned char upper[]);
 static void moveChip(char dir, int* chipIndex, unsigned char upper[]);
-static void searchSeed(int rngtype, unsigned long seed, int step);
+static void searchSeed(int rngtype, uint_fast32_t seed, int step);
 static void* searchPools(void* args);
 
 static int twIntro(struct prng rng, int step, unsigned char upper[]);
 
 typedef struct PoolInfo {
-    unsigned long poolStart;
-    unsigned long poolEnd;
+    uint_fast32_t poolStart;
+    uint_fast32_t poolEnd;
 } PoolInfo;
 
 static char* route;
@@ -172,17 +175,21 @@ int main(int argc, const char* argv[]) {
     }
 
     threadIDs = malloc((numThreads - 1) * sizeof(pthread_t));
-    unsigned long firstSeed = 0;
-    unsigned long lastSeed = 0x7FFFFFFFUL;
-    unsigned long seedPoolSize = (lastSeed-firstSeed+1)/numThreads;
+    uint_fast32_t firstSeed = 0;
+    uint_fast32_t lastSeed = 0x7FFFFFFFUL;
+    uint_fast32_t seedPoolSize = (lastSeed-firstSeed+1)/numThreads;
 
-  //clock_t time_a = clock();
+    #if DEBUG
+        clock_t time_a = clock();
+    #endif
 
     for (long threadNum = 0; threadNum < numThreads - 1; threadNum++) {  //Run a number of threads equal to system threads - 1
         PoolInfo* poolInfo = malloc(sizeof(PoolInfo)); //Starting seed and ending seed
         poolInfo->poolStart = firstSeed + seedPoolSize * threadNum;
         poolInfo->poolEnd = firstSeed + seedPoolSize * (threadNum + 1) - 1;
-        //printf("Thread #%ld: start=%#lx\tend=%#lx\n", threadNum, poolInfo->poolStart, poolInfo->poolEnd);
+        #if DEBUG
+            printf("Thread #%ld: start=0x%" PRIXFAST32 "\tend=0x%" PRIXFAST32 "\n", threadNum, poolInfo->poolStart, poolInfo->poolEnd);
+        #endif
 
         pthread_create(&threadIDs[threadNum], NULL, searchPools, (void*) poolInfo);
     }
@@ -190,24 +197,28 @@ int main(int argc, const char* argv[]) {
     PoolInfo* poolInfo = malloc(sizeof(PoolInfo)); //Use the already existing main thread to do the last pool
     poolInfo->poolStart = firstSeed + seedPoolSize * (numThreads - 1);
     poolInfo->poolEnd = lastSeed;
-    //printf("Main thread: start=%#lx\tend=%#lx\n", poolInfo->poolStart, poolInfo->poolEnd);
+    #if DEBUG
+        printf("Main thread: start=0x%" PRIXFAST32 "\tend=0x%" PRIXFAST32 "\n", poolInfo->poolStart, poolInfo->poolEnd);
+    #endif
     searchPools((void*) poolInfo);
 
     for (int t = 0; t < numThreads - 1; t++) { //Make the main thread wait for the other threads to finish so the program doesn't end early
         pthread_join(threadIDs[t], NULL);
     }
 
-  //unsigned long numSeeds = lastSeed - firstSeed + 1;
-  //clock_t time_b = clock();
-  //double duration = time_b - time_a;
-    
-  //printf("searched %lu seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
-  //printf("average %.1f us/seed\n", (duration * (1e9 / CLOCKS_PER_SEC)) / numSeeds);
+    #if DEBUG
+        uint_fast32_t numSeeds = lastSeed - firstSeed + 1;
+        clock_t time_b = clock();
+        double duration = time_b - time_a;
+        
+        printf("searched %" PRIuFAST32 " seeds in %f ms\n", numSeeds, duration * (1e3 / CLOCKS_PER_SEC));
+        printf("average %.1f us/seed\n", (duration * (1e9 / CLOCKS_PER_SEC)) / numSeeds);
+    #endif
 }
 
 static void* searchPools(void* args) {
     PoolInfo* poolInfo = ((PoolInfo*) args);
-    for (unsigned long seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
+    for (uint_fast32_t seed = poolInfo->poolStart; seed <= poolInfo->poolEnd; seed++) {
         searchSeed(TW, seed, EVEN);
         searchSeed(TW, seed, ODD);
         searchSeed(MS, seed, EVEN);
@@ -248,7 +259,7 @@ static bool verifyRoute(void) {
     return ok;
 }
 
-static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //Step: 1 = EVEN, 0 = ODD
+static void searchSeed(int rngtype, uint_fast32_t startingSeed, int step) { //Step: 1 = EVEN, 0 = ODD
     struct prng rng = {startingSeed};
     int chipIndex = chipIndexInitial;
     unsigned char map[1024];
@@ -306,7 +317,7 @@ static void searchSeed(int rngtype, unsigned long startingSeed, int step) { //St
         moveChip(route[i++], &chipIndex, map);
         if (map[chipIndex] == BLOB_N) return;
     }
-    printf("Successful seed: %lu, Step: %s, RNG: %s\n", startingSeed, step == EVEN ? "even" : "odd", rngtype == TW ? "TW" : "MS");
+    printf("Successful seed: %" PRIuFAST32 ", Step: %s, RNG: %s\n", startingSeed, step == EVEN ? "even" : "odd", rngtype == TW ? "TW" : "MS");
 }
 
 /* TW search */
